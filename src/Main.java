@@ -38,6 +38,7 @@ public class Main {
             IvParameterSpec ivParameterSpec = new IvParameterSpec(ivBytes);
             aesCipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec);
 
+
             byte[] decryptedData = aesCipher.doFinal(encryptedFileBytes, 384, encryptedFileBytes.length - 384);
 
             // Verify Integrity using HmacMD5
