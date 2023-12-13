@@ -1,129 +1,178 @@
+import javax.crypto.Cipher;
+import javax.crypto.Mac;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.FileInputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.security.*;
-import javax.crypto.*;
-import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
+import java.security.Key;
+import java.security.KeyStore;
+import java.security.PublicKey;
+import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 
 public class Main {
+
     public static void main(String[] args) {
         try {
-            // Task 1: Get Key1, IV, and Key2
-            FileInputStream encryptedFileInputStream = new FileInputStream("ciphertext.enc");
-            byte[] encryptedFileBytes = new byte[encryptedFileInputStream.available()];
-            encryptedFileInputStream.read(encryptedFileBytes);
+            // Load the keystore from the file system
+            KeyStore keyStore = KeyStore.getInstance("JKS");
 
-            // Load keystore
-            KeyStore keystore = KeyStore.getInstance("JKS");
-            FileInputStream keystoreInputStream = new FileInputStream("lab1Store");
-            keystore.load(keystoreInputStream, "lab1StorePass".toCharArray());
-
-            // Get private key
-            PrivateKey privateKey = (PrivateKey) keystore.getKey("lab1EncKeys", "lab1KeyPass".toCharArray());
-
-            // Decrypt Key1 and Key2
-            Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            rsaCipher.init(Cipher.DECRYPT_MODE, privateKey);
-
-            byte[] key1Bytes = rsaCipher.doFinal(encryptedFileBytes, 0, 128);
-            byte[] ivBytes = rsaCipher.doFinal(encryptedFileBytes, 128, 128);
-            byte[] key2Bytes = rsaCipher.doFinal(encryptedFileBytes, 256, 128);
-
-            // Decrypt the data using Key1 and IV
-            Cipher aesCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            SecretKeySpec secretKeySpec = new SecretKeySpec(key1Bytes, "AES");
-            IvParameterSpec ivParameterSpec = new IvParameterSpec(ivBytes);
-            aesCipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec);
-
-
-            byte[] decryptedData = aesCipher.doFinal(encryptedFileBytes, 384, encryptedFileBytes.length - 384);
-
-            // Verify Integrity using HmacMD5
-            Mac hmacMD5 = Mac.getInstance("HmacMD5");
-            SecretKeySpec key2Spec = new SecretKeySpec(key2Bytes, "HmacMD5");
-            hmacMD5.init(key2Spec);
-
-            byte[] calculatedHmac = hmacMD5.doFinal(decryptedData);
-            // Compare calculatedHmac with the provided HmacMD5 from the file
-            // read HmacMD5 from the file
-            byte[] providedHmac = Files.readAllBytes(Paths.get("ciphertext.mac1.txt")); // Assuming you have the HmacMD5 stored in this file
-
-
-
-            if (MessageDigest.isEqual(calculatedHmac, providedHmac)) {
-                System.out.println("HmacMD5 is valid.");
-            } else {
-                System.out.println("HmacMD5 is NOT valid.");
+            // Load the keystore in a try statement to close it after use automatically
+            try (FileInputStream fis = new FileInputStream("Lab1Store")) {
+                // Load the keystore using the password provided as parameter
+                keyStore.load(fis, "lab1StorePass".toCharArray());
             }
 
-            // Verify Digital Signature
-            CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
-            FileInputStream certFileInputStream = new FileInputStream("lab1Sign.cert");
-            X509Certificate cert = (X509Certificate) certFactory.generateCertificate(certFileInputStream);
+            // Lab1:  Task 1 and Task 2
 
-            Signature signature = Signature.getInstance("SHA256withRSA");
-            signature.initVerify(cert.getPublicKey());
-            signature.update(decryptedData);
+            // Read the encrypted file into a byte array and print it
+            byte[] encryptedFile = Files.readAllBytes(Paths.get("Ciphertext.enc"));
 
-            // Compare the result with the provided digital signatures
-            byte[] signatureBytes1 = Files.readAllBytes(Paths.get("ciphertext.enc.sig1")); // Assuming you have the signature in this file
-            byte[] signatureBytes2 = Files.readAllBytes(Paths.get("ciphertext.enc.sig2"));
+            // Split the encrypted file into parts
+            // Key1 is the first 128 bytes of the encrypted file
+            byte[] encryptedKey1 = Arrays.copyOfRange(encryptedFile, 0, 128);
+            // IV is the next 128 bytes of the encrypted file
+            byte[] encryptedIV = Arrays.copyOfRange(encryptedFile, 128, 256);
+            // Key2 is the next 128 bytes of the encrypted file
+            byte[] encryptedKey2 = Arrays.copyOfRange(encryptedFile, 256, 384);
+            // Data is the rest of the encrypted file
+            byte[] encryptedData = Arrays.copyOfRange(encryptedFile, 384, encryptedFile.length);
 
-            boolean isSignatureValid1 = signature.verify(signatureBytes1);
-            boolean isSignatureValid2 = signature.verify(signatureBytes2);
 
-            if (isSignatureValid1 && isSignatureValid2) {
-                System.out.println("Digital Signatures are valid.");
-            } else {
-                System.out.println("Digital Signatures are NOT valid.");
+            // Get the private key from the keystore using the password provided as parameter
+            Key privateKey = keyStore.getKey("lab1EncKeys", "lab1KeyPass".toCharArray());
+
+
+
+            // Task 1: Decrypt Key1, IV, and Key2 using RSA and print them
+            byte[] key1 = decryptRSA(encryptedKey1, privateKey);
+            byte[] iv = decryptRSA(encryptedIV, privateKey);
+            byte[] key2 = decryptRSA(encryptedKey2, privateKey);
+
+            // Task2: Decrypt data using key1 and IV and print it
+            byte[] plaintext = decryptAES(encryptedData, key1, iv);
+            System.out.println(new String(plaintext));
+            System.out.println(" \n ****************************************************************** \n");
+
+
+
+
+            // Lab 2:  Task 3 and Task 4
+
+
+            // Read MAC strings and convert them to byte arrays
+            String mac1String = new String(Files.readAllBytes(Paths.get("Ciphertext.mac1.txt")));
+            String mac2String = new String(Files.readAllBytes(Paths.get("Ciphertext.mac2.txt")));
+
+            // Convert MAC strings to byte arrays
+            byte[] mac1 = hexStringToByteArray(mac1String);
+            byte[] mac2 = hexStringToByteArray(mac2String);
+
+            // Task 3: Verify MAC strings and print the result of the verification process
+            if (verifyMac(plaintext, key2, mac2)) {
+                System.out.println("MAC2 verification is successful. `\n");
+            } else if(verifyMac(plaintext, key2, mac1)  ){
+                System.out.println("MAC1 verification is successful. `\n");
+            }else {
+                System.out.println("MACS verification has failed.");
             }
 
-            // Check Message Authentication Codes (MACs)
-            SecretKeySpec key1Spec = new SecretKeySpec(key1Bytes, "HmacMD5");
+            // Verify Digital Signatures and print the result of the verification process
+            // using the public key from the certificate file provided as parameter
+            X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new FileInputStream("Lab1Sign.cert"));
+            // Get the public key from the certificate file provided as parameter
+            PublicKey publicKey = cert.getPublicKey();
 
-            Mac mac1 = Mac.getInstance("HmacMD5");
-            mac1.init(key1Spec);
-            byte[] calculatedMAC1 = mac1.doFinal(decryptedData);
-
-            // Read ciphertext.mac1.txt and convert it to a byte array
-            byte[] providedMAC1 = Files.readAllBytes(Paths.get("ciphertext.mac1.txt"));
-
-            if (MessageDigest.isEqual(calculatedMAC1, providedMAC1)) {
-                System.out.println("MAC1 is valid.");
-            } else {
-                System.out.println("MAC1 is NOT valid.");
+            // Task 4: Verify the signature and print the result of the verification process using the public key
+            // from the certificate file provided as parameter and the data provided as parameter
+            if (verifySignature("ciphertext.enc.sig1", publicKey, plaintext)) {
+                System.out.println("Signature1 verification is successful.");
+            } else if (verifySignature("ciphertext.enc.sig2", publicKey, plaintext)){
+                System.out.println("Signature2 verification 2 successful.");
+            }else{
+                System.out.println("Signatures verification have failed.");
             }
-
-            // Repeat the process for MAC2
-            Mac mac2 = Mac.getInstance("HmacMD5");
-            mac2.init(key1Spec);
-            byte[] calculatedMAC2 = mac2.doFinal(decryptedData);
-
-            // Read ciphertext.mac2.txt and convert it to a byte array
-            byte[] providedMAC2 = Files.readAllBytes(Paths.get("ciphertext.mac2.txt"));
-
-            if (MessageDigest.isEqual(calculatedMAC2, providedMAC2)) {
-                System.out.println("MAC2 is valid.");
-            } else {
-                System.out.println("MAC2 is NOT valid.");
-            }
-
-            // Task 2: Get the plaintext
-
-            // At this point, 'decryptedData' contains the original plaintext message.
-            String plaintextMessage = new String(decryptedData, "UTF-8");
-            System.out.println("Decrypted Message: " + plaintextMessage);
-
-            // Close resources
-            encryptedFileInputStream.close();
-            keystoreInputStream.close();
-            certFileInputStream.close();
-
+        // Catch exceptions and print error messages
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    // Decrypts data using RSA and the private key
+    private static byte[] decryptRSA(byte[] data, Key privateKey) throws Exception {
+        // Create a Cipher object and initialize it with the private key
+        // and the RSA algorithm in ECB mode with PKCS1Padding scheme
+        Cipher cipher = Cipher.getInstance("RSA");
+        // Decrypt the data and return the result
+        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+        // Decrypt the data and return the result
+        return cipher.doFinal(data);
+    }
+
+    // Decrypts data using AES and the key and IV provided as parameters
+    private static byte[] decryptAES(byte[] data, byte[] key, byte[] iv) throws Exception {
+        // Create a Cipher object and initialize it with the key
+        // and IV provided as parameters and the AES algorithm in CBC mode with PKCS5Padding scheme
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        // Create a SecretKeySpec object and an IvParameterSpec object using the key and IV provided as parameters
+        SecretKeySpec secretKeySpec = new SecretKeySpec(key, "AES");
+        // Initialize the Cipher object with the key and IV provided as parameters
+        IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
+        // Decrypt the data and return the result
+        cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec);
+        // Decrypt the data and return the result
+        return cipher.doFinal(data);
+    }
+
+    // Verifies the MAC of the data using the key provided as parameter and the calculated MAC
+    private static boolean verifyMac(byte[] data, byte[] key, byte[] macToVerify) throws Exception {
+        // Create a Mac object and initialize it with the key provided as parameter and the HmacMD5 algorithm
+        Mac mac = Mac.getInstance("HmacMD5");
+        // Create a SecretKeySpec object using the key provided as parameter and the HmacMD5 algorithm
+        SecretKeySpec keySpec = new SecretKeySpec(key, "HmacMD5");
+        // Initialize the Mac object with the key provided as parameter
+        mac.init(keySpec);
+        // Compute the MAC of the data provided as parameter
+        // (calculated MAC)
+        byte[] macBytes = mac.doFinal(data);
+        // Return the result of the verification process
+        return Arrays.equals(macBytes, macToVerify);
+    }
+
+    // Verifies the signature of the data using the public key provided as parameter
+    // and the signature provided as parameter
+    private static boolean verifySignature(String signatureFile, PublicKey publicKey, byte[] data) throws Exception {
+        // Read the signature from the file system and verify it using the public key and the data provided as parameter
+        byte[] signatureBytes = Files.readAllBytes(Paths.get(signatureFile));
+        // Create a Signature object and initialize it with
+        // the public key provided as parameter and the SHA1withRSA algorithm
+        Signature signature = Signature.getInstance("SHA1withRSA");
+        signature.initVerify(publicKey);
+        // Update the Signature object with the data provided as parameter
+        signature.update(data);
+        // Return the result of the verification process
+        return signature.verify(signatureBytes);
+    }
+
+    // This Method is copied from StackOverFlow website
+    // Converts a hex string to a byte array
+    private static byte[] hexStringToByteArray(String s) {
+        // The length of the string must be even to represent a byte array in hex format,
+        // so we add a leading 0 if needed to make the length even
+        int len = s.length();
+        // Each byte is represented by two characters in hex representation so the length of the byte array is half
+        byte[] data = new byte[len / 2];
+        // Convert each pair of characters to a byte and add it to the byte array
+        for (int i = 0; i < len; i += 2) {
+            // Character.digit(c, 16) converts the character c to its hexadecimal value
+            data[i / 2] = (byte) ((Character.digit(s.charAt(i), 16) << 4)
+                    + Character.digit(s.charAt(i + 1), 16));
+        }
+        // Return the byte array
+        return data;
     }
 }
